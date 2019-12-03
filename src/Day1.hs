@@ -1,4 +1,4 @@
-module Day1 where
+module Day1 (solve) where
 
 fuel :: Int -> Int
 fuel n = quot n 3 - 2
@@ -10,12 +10,8 @@ fuelTotal n
     where
       f = fuel n
 
-part1 :: IO ()
-part1 = do
-  total <- sum . map (fuel . read) . lines <$> getContents
-  print total
-
-part2 :: IO ()
-part2 = do
-  total <- sum . map (fuelTotal . read) . lines <$> getContents
-  print total
+solve :: IO ()
+solve = do
+  input <- map read . lines <$> getContents
+  print . sum $ map fuel input
+  print . sum $ map fuelTotal input

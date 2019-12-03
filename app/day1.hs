@@ -1,3 +1,3 @@
 import Day1
 
-main = part2
+main = solve
