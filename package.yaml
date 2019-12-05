@@ -60,6 +60,16 @@ executables:
     dependencies:
     - solutions
 
+  d4:
+    main:                day4.hs
+    source-dirs:         app
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - solutions
+
 tests:
   solutions-test:
     main:                Spec.hs
