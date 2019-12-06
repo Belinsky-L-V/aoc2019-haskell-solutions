@@ -1,14 +1,15 @@
-{-# LANGUAGE OverloadedStrings, RankNTypes, FlexibleInstances, TypeApplications, ScopedTypeVariables #-}
+{-# LANGUAGE OverloadedStrings, RankNTypes, FlexibleInstances,
+  TypeApplications, ScopedTypeVariables, NamedFieldPuns,
+  RecordWildCards #-}
 module Day5 where
 
-import Data.Functor.Identity
 import Control.Monad.ST
+import Data.STRef
+import Control.Monad (when, unless)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Maybe
-import Data.Either (rights)
-import Control.Monad (when, unless)
-import Data.Maybe (fromMaybe)
-import Data.Foldable (asum)
+import Control.Monad.Trans.Reader
+import Control.Monad.Trans.Except
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.IO as Text.IO
@@ -19,8 +20,6 @@ import qualified Data.Vector.Mutable as MVector
 import Data.Proxy
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
-import Debug.Trace (trace)
-import Control.Monad.Trans.Except
 
 data Halt = Run | Halt deriving (Show, Read, Eq)
 data Mode = Pos | Immed deriving (Show, Read, Eq)
@@ -29,65 +28,127 @@ type Code s = MVector s Int
 type Addr = Int
 type Input = Int
 type Output = Int
-type Op s = Addr -> [Mode] -> Code s -> [Input] -> ExceptT String (ST s) ([Input], [Output])
+type Op s = [Mode] -> Interpreter s ()
 
 data IntcodeOp = IntcodeOp
   { icopRun :: forall s. Op s
-  , icopArity :: !Int
+  , icopParams :: !Int
   }
 
+data IntcodeVM s = IntcodeVM
+  { halted :: STRef s Halt
+  , code :: Code s
+  , inputBuf :: STRef s [Input]
+  , outputBuf :: STRef s [Output]
+  , instPointer :: STRef s Int
+  }
+
+dumpVM :: forall s. IntcodeVM s -> ST s String
+dumpVM vm@IntcodeVM{..} = do
+  halt <- readSTRef halted
+  code <- Vector.freeze code
+  input <- readSTRef inputBuf
+  output <- readSTRef outputBuf
+  pointer <- readSTRef instPointer
+  return $ unlines [show (halt, pointer), show (input, output), show code]
+
+type Interpreter s = ReaderT (IntcodeVM s) (ExceptT String (ST s))
+
 class ToIntcodeOp t where
-  arity_ :: proxy t -> Int
+  params_ :: proxy t -> Int
   toOp_ :: t -> forall s. Op s
 
 instance ToIntcodeOp Int where
-  arity_ _ = 0
-  toOp_ x addr [Pos] code input = do
-    targetAddr <- MVector.read code addr
+  params_ _ = 1
+  toOp_ x [Pos] = do
+    vm@IntcodeVM{..} <- ask
+    targetAddr <- withMode Immed
     MVector.write code targetAddr x
-    return (input, [])
-  toOp_ x addr modes code input = throwE $ "At " ++ show addr ++ ";\n Mode for writing isn't positional, or leftover modes: " ++ show modes
+    return ()
+  toOp_ x modes = ReaderT $ \vm@IntcodeVM{..} -> do
+    dump <- lift $ dumpVM vm
+    throwE $ "Mode for writing isn't positional, or leftover modes: " ++ show modes ++ " " ++ dump
 
 instance ToIntcodeOp r => ToIntcodeOp (Int -> r) where
-  arity_ _ = 1 + arity_ (Proxy @r)
-  toOp_ f addr [] code input = throwE $ "At " ++ show addr ++ ";\n Ran out of modes"
-  toOp_ f addr (m:ms) code input = do
-    x <- case m of
-           Pos -> do
-             readAddr <- MVector.read code addr
-             MVector.read code readAddr
-           Immed -> MVector.read code addr
-    toOp_ (f x) (succ addr) ms code input
+  params_ _ = 1 + params_ (Proxy @r)
+  toOp_ f [] = ReaderT $ \vm -> do
+    dump <- lift $ dumpVM vm
+    throwE $ "Ran out of modes: " ++ dump
+  toOp_ f (m:ms) = do
+    x <- withMode m
+    toOp_ (f x) ms
 
 toIntcodeOp :: forall f. ToIntcodeOp f => f -> IntcodeOp
-toIntcodeOp f = IntcodeOp (toOp_ f) (arity_ (Proxy @f))
+toIntcodeOp f = IntcodeOp (toOp_ f) (params_ (Proxy @f))
+
+withMode :: Mode -> Interpreter s Int
+withMode Pos = ReaderT $ \vm@IntcodeVM{..} -> do
+  arg <- lift $ MVector.read code =<< MVector.read code =<< readSTRef instPointer
+  lift $ modifySTRef instPointer succ
+  return arg
+withMode Immed = ReaderT $ \vm@IntcodeVM{..} -> do
+  arg <- lift $ MVector.read code =<< readSTRef instPointer
+  lift $ modifySTRef instPointer succ
+  return arg
 
 inputOp :: IntcodeOp
-inputOp = IntcodeOp inputOp' 0
+inputOp = IntcodeOp inputOp' 1
   where
     inputOp' :: forall s. Op s
-    inputOp' addr [Pos] code (x:input) = do
-      writeAddr <- MVector.read code addr
+    inputOp' [Pos] = do
+      vm@IntcodeVM{inputBuf, code} <- ask
+      (x:rest) <- lift . lift $ readSTRef inputBuf
+      writeAddr <- withMode Immed
       MVector.write code writeAddr x
-      return (input, [])
-    inputOp' addr modes code input = throwE $ "Invalid input: " ++ show (addr, modes, input)
+      lift . lift $ modifySTRef inputBuf tail
+      return ()
+    inputOp' modes = ReaderT $ \vm -> do
+      dump <- lift $ dumpVM vm
+      throwE $ "Invalid input modes: " ++ show modes ++ " " ++ dump
 
 outputOp :: IntcodeOp
-outputOp = IntcodeOp outputOp' 0
+outputOp = IntcodeOp outputOp' 1
   where
     outputOp' :: forall s. Op s
-    outputOp' addr [Pos] code input = do
-      x <- MVector.read code =<< MVector.read code addr
-      return (input, [x])
-    outputOp' addr [Immed] code input = do
-      x <- MVector.read code addr
-      return (input, [x])
-    outputOp' addr modes code input = throwE $ "Invalid output: " ++ show (addr, modes, input)
+    outputOp' [mode] = do
+      vm@IntcodeVM{outputBuf} <- ask
+      x <- withMode mode
+      lift . lift $ modifySTRef outputBuf (x:)
+    outputOp' modes = ReaderT $ \vm -> do
+      dump <- lift $ dumpVM vm
+      throwE $ "Invalid output: " ++ show modes ++ " " ++ dump
 
 halt :: IntcodeOp
 halt = IntcodeOp halt' 0
   where
-    halt' addr modes code input = pure (input, [])
+    halt' [] = ReaderT $ \IntcodeVM{halted} -> lift $ writeSTRef halted Halt
+    halt' modes = ReaderT $ \vm -> do
+      dump <- lift $ dumpVM vm
+      throwE $ "Trying to halt with modes: " ++ show modes ++ " " ++ dump
+
+jumpConditional :: (Int -> Bool) -> IntcodeOp
+jumpConditional f = IntcodeOp jumpIfTrue' 2
+  where
+    jumpIfTrue' :: forall s. Op s
+    jumpIfTrue' [firstMode, secondMode] = do
+      vm@IntcodeVM{..} <- ask
+      check <- withMode firstMode
+      jumpTo <- withMode secondMode
+      when (f check) . lift . lift $ writeSTRef instPointer jumpTo
+
+writeConditional :: (Int -> Int -> Bool) -> IntcodeOp
+writeConditional f = IntcodeOp writeConditional' 3
+  where
+    writeConditional' :: forall s. Op s
+    writeConditional' [firstMode,secondMode,Pos] = do
+      vm@IntcodeVM{..} <- ask
+      first <- withMode firstMode
+      second <- withMode secondMode
+      writeTo <- withMode Immed
+      MVector.write code writeTo (fromEnum $ first `f` second)
+    writeConditional' modes = ReaderT $ \vm -> do
+      dump <- lift $ dumpVM vm
+      throwE $ "Attempting conditional write with immediate mode: " ++ show modes ++ " " ++ dump
 
 ops :: IntMap IntcodeOp
 ops = IntMap.fromList
@@ -95,6 +156,10 @@ ops = IntMap.fromList
   , (2, toIntcodeOp ((*) :: Int -> Int -> Int))
   , (3, inputOp)
   , (4, outputOp)
+  , (5, jumpConditional (/= 0))
+  , (6, jumpConditional (== 0))
+  , (7, writeConditional (<))
+  , (8, writeConditional (==))
   , (99, halt)
   ]
 
@@ -110,51 +175,84 @@ parseOpCode n =
       opCode = read @Int . reverse . take 2 $ digitsRev
       toMode '0' = pure Pos
       toMode '1' = pure Immed
-      toMode c = throwE $ "Invalid mode code: " ++ show c ++ " in " ++ show n
+      toMode c = throwE $ "Invalid mode code: " ++ show c ++ " in " ++ show n ++ "\n"
       modes = traverse toMode . drop 2 $ digitsRev
    in sequenceA (opCode, modes)
 
-runIntcodeOp :: Int -> Code s -> [Int] -> ExceptT String (ST s) (Halt, Addr, [Input], [Output])
-runIntcodeOp addr code input = do
-  parseOp <- parseOpCode <$> MVector.read code addr
-  (opCode, modes) <- parseOp
-  op <- maybeToExceptT ("OpCode " ++ show opCode ++ " not recognised") . MaybeT . pure $ IntMap.lookup opCode ops
-  let modesPadded = modes ++ replicate (icopArity op + 1 - length modes) Pos
-  (newInput, output) <- icopRun op (addr + 1)  modesPadded code input
-  let nextAddr = addr + icopArity op + 2
-  return (if opCode == 99 then Halt else Run, nextAddr, newInput, output)
+runIntcodeOp :: Interpreter s ()
+runIntcodeOp = do
+  vm <- ask
+  opCode <- withMode Immed
+  parseOp <-
+    lift $
+    catchE
+      (parseOpCode opCode)
+      (\err -> do
+         dump <- lift $ dumpVM vm
+         throwE $ err ++ "\tDump: " ++ dump ++ "\n")
+  let (opCode, modes) = parseOp
+  op <-
+    lift $
+    maybeToExceptT ("OpCode " ++ show opCode ++ " not recognised") .
+    MaybeT . pure $
+    IntMap.lookup opCode ops
+  let modesPadded = modes ++ replicate (icopParams op - length modes) Pos
+  icopRun op modesPadded
 
+initVM :: (forall s. (ST s) (Code s)) -> [Input] -> ST s (IntcodeVM s)
+initVM mcode inputs = do
+  instPointer <- newSTRef 0
+  inputBuf <- newSTRef inputs
+  outputBuf <- newSTRef []
+  halted <- newSTRef Run
+  code <- mcode
+  return $ IntcodeVM {..}
 
-runIntcode :: (forall s. ST s (Code s)) -> [Int] -> Either String (([Int], [Int]), Vector Int)
-runIntcode mutvec inputs = runST $ runIntcode' mutvec inputs
+runIntcode :: forall s. Interpreter s (Addr, [Input], [Output], Vector Int)
+runIntcode = do
+  run
+  vm@IntcodeVM{..} <- ask
+  finalPtr <- lift. lift $ readSTRef instPointer
+  finalCode <- Vector.freeze code
+  finalInput <- lift . lift $ readSTRef inputBuf
+  finalOutput <- lift. lift $ readSTRef outputBuf
+  return (finalPtr, finalInput, finalOutput, finalCode)
+    where
+      run = do
+        vm@IntcodeVM{..} <- ask
+        haltedNow <- lift . lift $ readSTRef halted
+        currentPtr <- lift . lift $ readSTRef instPointer
+        unless (haltedNow == Halt) $
+          if haltedNow == Run && (currentPtr < 0 || currentPtr >= MVector.length code)
+             then lift . throwE $ "Attempting to access instruction out of memory at: " ++ show currentPtr
+             else runIntcodeOp >> run
+
+initAndRun :: Monad m => (forall s. (ST s) (Code s)) -> [Input] -> ExceptT String m (Addr, [Input], [Output], Vector Int)
+initAndRun mcode inputs = except $ runST (runExceptT go)
   where
-    runIntcode' :: (forall s. ST s (Code s)) -> [Int] -> forall s. (ST s) (Either String (([Int], [Int]), Vector Int))
-    runIntcode' mutvec inputs = runExceptT $ do
-      code <- lift mutvec
-      finalResult <- run 0 code inputs
-      finalCode <- Vector.freeze code
-      return (finalResult, finalCode)
-        where
-          run addr code inputs = do
-            (state, nextAddr, currentInput, currentOutput) <- runIntcodeOp addr code inputs
-            if state == Run && (nextAddr < 0 || nextAddr >= MVector.length code)
-               then throwE $ "Attempting to access instruction out of memory at: " ++ show nextAddr
-               else case state of
-                      Halt -> return (currentInput, currentOutput)
-                      Run -> do
-                        (newInput, newOutput) <- run nextAddr code currentInput
-                        return (newInput, currentOutput ++ newOutput)
+    go = do
+      vm <- lift $ initVM mcode inputs
+      runReaderT runIntcode vm
 
-readIntCode :: Text.Text -> Except String (Vector Int)
+readIntCode :: Monad m => Text.Text -> ExceptT String m (Vector Int)
 readIntCode text =
   let codeOps = Text.splitOn "," text
       intCodeList = except $ traverse (fmap fst . Text.Read.signed Text.Read.decimal) codeOps
    in Vector.fromList <$> intCodeList
 
+solve' :: ExceptT String IO ()
+solve' = do
+  codeText <- lift Text.IO.getContents
+  intCodeVec <- readIntCode codeText
+  (ptr, input, output, code) <- initAndRun (modifyIntcode intCodeVec []) [1]
+  lift . print $ reverse output
+  (ptr, input, output, code) <- initAndRun (modifyIntcode intCodeVec []) [5]
+  lift . print $ reverse output
+  pure ()
+
 solve :: IO ()
 solve = do
-  codeText <- Text.IO.getContents
-  let intCodeVec' = readIntCode codeText
-  case runExcept intCodeVec' of
-    Left err -> print $ "Failed input parse: " ++ err
-    Right intCodeVec -> print $ runIntcode (modifyIntcode intCodeVec []) [1]
+  result <- runExceptT solve'
+  case result of
+    Left err -> putStrLn err
+    Right () -> pure ()
