@@ -26,6 +26,7 @@ dependencies:
 - text == 1.2.3.1
 - megaparsec == 7.0.5
 - transformers == 0.5.6.2
+- fgl == 5.7.0.1
 
 library:
   source-dirs: src
@@ -81,10 +82,9 @@ executables:
     dependencies:
     - solutions
 
-tests:
-  solutions-test:
-    main:                Spec.hs
-    source-dirs:         test
+  d6:
+    main:                day6.hs
+    source-dirs:         app
     ghc-options:
     - -threaded
     - -rtsopts
