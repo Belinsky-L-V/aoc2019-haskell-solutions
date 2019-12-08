@@ -19,8 +19,8 @@ import qualified Data.IntMap as IntMap
 import Control.Foldl (Fold(..))
 import qualified Control.Foldl as Foldl
 import Streaming (Of, Stream)
-import qualified Streaming
-import qualified Streaming.Prelude
+import qualified Streaming as S
+import qualified Streaming.Prelude as SP
 import Data.Functor.Identity
 
 data Halt = Run | Halt deriving (Show, Read, Eq)
@@ -31,18 +31,18 @@ type Addr = Int
 type Input = Int
 type Output = Int
 type Interpreter = ExceptT String (State IntcodeVM)
-type Op = [Mode] -> [Input] -> Interpreter (Maybe Int)
+type Op = [Mode] -> Interpreter (Maybe Int)
 
 data IntCodeOp = IntCodeOp
   { intCodeOp :: Op
   , paramCount :: Int
-  , inputCount :: Int
   }
 
 data IntcodeVM = IntcodeVM
   { haltState :: Halt
   , code :: Code
   , instrPointer :: Int
+  , inputBuf :: Stream (Of Int) Identity ()
   }
 
 dumpVM :: IntcodeVM -> String
@@ -58,25 +58,25 @@ class ToIntCodeOp t where
 
 instance ToIntCodeOp Int where
   countParams _ = 1
-  toOp x [mode] _ = do
+  toOp x [mode] = do
     vm@IntcodeVM{..} <- lift get
     write x mode
     return Nothing
-  toOp x modes _ = do
+  toOp x modes = do
     vm <- lift get
     throwE $ "Leftover modes: " ++ show modes ++ "\n" ++ dumpVM vm
 
 instance ToIntCodeOp r => ToIntCodeOp (Int -> r) where
   countParams _ = 1 + countParams (Proxy @r)
-  toOp f [] _ = do
+  toOp f [] = do
     vm <- lift get
     throwE $ "Ran out of modes.\n" ++ dumpVM vm
-  toOp f (m:ms) _ = do
+  toOp f (m:ms) = do
     x <- readWithMode m
-    toOp (f x) ms []
+    toOp (f x) ms
 
 toIntcodeOp :: forall f. ToIntCodeOp f => f -> IntCodeOp
-toIntcodeOp f = IntCodeOp (toOp f) (countParams (Proxy @f)) 0
+toIntcodeOp f = IntCodeOp (toOp f) (countParams (Proxy @f))
 
 wrapMaybe str = maybeToExceptT str . MaybeT . pure
 
@@ -106,57 +106,65 @@ write x Immediate = do
   throwE $ "Attempt to write with immediate mode.\n" ++ dumpVM vm
 
 inputOp :: IntCodeOp
-inputOp = IntCodeOp inputOp' 1 1
+inputOp = IntCodeOp inputOp' 1
   where
-    inputOp' [mode] [x] = write x mode >> return Nothing
-    inputOp' modes input = do
+    inputOp' [mode] = do
+      vm@IntcodeVM {..} <- lift get
+      (x, restOfInput) <-
+        wrapMaybe
+          ("Attemping to get input from an empty buffer.\n" ++ dumpVM vm) $
+        runIdentity (SP.uncons inputBuf)
+      write x mode
+      lift $ put vm {inputBuf = restOfInput}
+      return Nothing
+    inputOp' modes = do
       vm <- lift get
       throwE $ "Invalid input modes: " ++ show modes ++ "\n" ++ dumpVM vm
 
 outputOp :: IntCodeOp
-outputOp = IntCodeOp outputOp' 1 0
+outputOp = IntCodeOp outputOp' 1
   where
-    outputOp' [mode] [] = do
+    outputOp' [mode] = do
       x <- readWithMode mode
       return $ Just x
-    outputOp' modes input = do
+    outputOp' modes = do
       vm <- lift get
       throwE $ "Invalid output: " ++ show modes ++ "\n" ++ dumpVM vm
 
 halt :: IntCodeOp
-halt = IntCodeOp halt' 0 0
+halt = IntCodeOp halt' 0
   where
-    halt' [] [] = do
+    halt' [] = do
       vm <- lift get
       lift $ put vm {haltState = Halt}
       return Nothing
-    halt' modes input = do
+    halt' modes = do
       vm <- lift get
       throwE $ "Trying to halt with modes: " ++ show modes ++ "\n" ++ dumpVM vm
 
 jumpConditional :: (Int -> Bool) -> IntCodeOp
-jumpConditional f = IntCodeOp jumpIfTrue' 2 0
+jumpConditional f = IntCodeOp jumpIfTrue' 2
   where
-    jumpIfTrue' [firstMode, secondMode] [] = do
+    jumpIfTrue' [firstMode, secondMode] = do
       vm <- lift get
       check <- readWithMode firstMode
       jumpTo <- readWithMode secondMode
       if f check then lift $ put vm {instrPointer = jumpTo}
                  else pure ()
       return Nothing
-    jumpIfTrue' modes input = do
+    jumpIfTrue' modes = do
       vm <- lift get
       throwE $ "Conditional jump with invalid modes: " ++ show modes ++ "\n" ++ dumpVM vm
 
 writeConditional :: (Int -> Int -> Bool) -> IntCodeOp
-writeConditional f = IntCodeOp writeConditional' 3 0
+writeConditional f = IntCodeOp writeConditional' 3
   where
-    writeConditional' [firstMode,secondMode,thirdMode] [] = do
+    writeConditional' [firstMode,secondMode,thirdMode] = do
       first <- readWithMode firstMode
       second <- readWithMode secondMode
       write (fromEnum $ first `f` second) thirdMode
       return Nothing
-    writeConditional' modes input = do
+    writeConditional' modes = do
       vm <- lift get
       throwE $ "Attempting conditional write with immediate mode: " ++ show modes ++ "\n" ++ dumpVM vm
 
@@ -200,21 +208,9 @@ runIntcodeOp = do
   let (opCode, modes) = parseOp
   op <- wrapMaybe ("OpCode " ++ show opCode ++ " not recognised") $ IntMap.lookup opCode ops
   let modesPadded = modes ++ replicate (paramCount op - length modes) Positional
-  intCodeOp op modesPadded []
+  intCodeOp op modesPadded
 
-initVM :: Code -> [Input] -> IntcodeVM
-initVM code inputs =
-  let instrPointer = 0
-      haltState = Run
-   in IntcodeVM {..}
 
-instrStream :: Stream ((->) Int) Identity (Maybe Int)
-instrStream = Streaming.yields (const Nothing)
-
-runIntcode :: IntcodeVM -> Stream (Of Int) Identity () -> Stream (Of Int) Interpreter ()
-runIntcode vm inputStream = undefined
-
-initAndRun = undefined
 
 readIntCode :: Monad m => Text.Text -> ExceptT String m Code
 readIntCode text =
