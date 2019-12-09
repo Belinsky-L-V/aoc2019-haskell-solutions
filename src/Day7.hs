@@ -11,23 +11,51 @@ import Intcode
 import Streaming (Of, Stream)
 import qualified Streaming as S
 import qualified Streaming.Prelude as SP
+import Data.Proxy
+import qualified Data.IntMap as IntMap
+
+clobber :: InputStream -> OutputStream
+clobber stream =
+  let code = IntMap.empty
+   in (Left "Initial placeholder", IntCodeVM Halt code 0 (pure ())) <$ stream
+
+ampChain :: Code -> [Int] -> OutputStream -> OutputStream
+ampChain code phases initial =
+  let inputs :: [Stream (Of Int) Identity ()]
+      inputs = SP.yield <$> phases
+      amp = runProgram code
+      step acc next = amp (next >> (() <$ acc))
+   in Foldl.fold (Fold step initial id) inputs
 
 runChain :: Code -> [Int] -> [Int]
-runChain code perm =
-  let inputs :: [Stream (Of Int) Identity ()]
-      inputs = SP.yield <$> perm
-      amp = runProgram code
-      step acc next = () <$ amp (next >> acc)
-      finalStream = Foldl.fold (Fold step (SP.yield 0) id) inputs
-   in runIdentity $ SP.toList_ finalStream
+runChain code phases =
+  let permChain = ampChain code phases . clobber $ SP.yield 0
+   in runIdentity . SP.toList_ $ permChain
 
-findBestInput :: Code -> Maybe Int
-findBestInput code =
+-- shlemiel, the amp feedbacker, yikes
+cycleChain :: (OutputStream -> OutputStream) -> OutputStream -> Int
+cycleChain chain stream =
+  case SP.lazily . runIdentity . SP.toList $ chain stream of
+    (output, (Right (), _)) -> last output
+    (output, _) -> cycleChain chain (clobber $ SP.each (0:output))
+
+fixChain :: Code -> [Int] -> Int
+fixChain code phases =
+  let chain = ampChain code phases
+   in cycleChain chain (clobber $ SP.yield 0)
+
+getMax :: [[Int]] -> Maybe Int
+getMax =
   let step (Just m) [x] = Just $ max m x
       step Nothing [x] = Just x
       step _ _ = Nothing
-      getMax = Foldl.fold (Fold step Nothing id)
-   in getMax $ runChain code <$> permutations [0..4]
+   in Foldl.fold (Fold step Nothing id)
+
+part1 :: Code -> Maybe Int
+part1 code = getMax $ runChain code <$> permutations [0..4]
+
+part2 :: Code -> Maybe Int
+part2 code = Foldl.fold Foldl.maximum $ fixChain code <$> permutations [5..9]
 
 solve :: IO ()
 solve = do
@@ -35,4 +63,4 @@ solve = do
   codeParse <- runExceptT (readIntCode codeText)
   case codeParse of
     Left err -> putStrLn err
-    Right intCode -> print $ findBestInput intCode
+    Right intCode -> print (part1 intCode) >> print (part2 intCode)

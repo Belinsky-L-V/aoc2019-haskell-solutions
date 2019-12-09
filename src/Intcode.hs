@@ -12,8 +12,9 @@
 
 module Intcode
   ( Code
+  , Halt(..)
   , VMResult
-  , IntCodeVM
+  , IntCodeVM(..)
   , InputStream
   , OutputStream
   , readIntCode
