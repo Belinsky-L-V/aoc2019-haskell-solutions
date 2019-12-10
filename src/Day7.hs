@@ -8,9 +8,8 @@ import qualified Data.Text as Text
 import qualified Data.Text.IO as Text.IO
 import qualified Data.Text.Read as Text.Read
 import Intcode
-import Streaming (Of, Stream)
-import qualified Streaming as S
-import qualified Streaming.Prelude as SP
+import Streaming
+import qualified Streaming.Prelude as S
 import Data.Proxy
 import qualified Data.IntMap as IntMap
 
@@ -22,27 +21,27 @@ clobber stream =
 ampChain :: Code -> [Int] -> OutputStream -> OutputStream
 ampChain code phases initial =
   let inputs :: [Stream (Of Int) Identity ()]
-      inputs = SP.yield <$> phases
+      inputs = S.yield <$> phases
       amp = runProgram code
       step acc next = amp (next >> (() <$ acc))
    in Foldl.fold (Fold step initial id) inputs
 
 runChain :: Code -> [Int] -> [Int]
 runChain code phases =
-  let permChain = ampChain code phases . clobber $ SP.yield 0
-   in runIdentity . SP.toList_ $ permChain
+  let permChain = ampChain code phases . clobber $ S.yield 0
+   in runIdentity . S.toList_ $ permChain
 
 -- shlemiel, the amp feedbacker, yikes
 cycleChain :: (OutputStream -> OutputStream) -> OutputStream -> Int
 cycleChain chain stream =
-  case SP.lazily . runIdentity . SP.toList $ chain stream of
+  case S.lazily . runIdentity . S.toList $ chain stream of
     (output, (Right (), _)) -> last output
-    (output, _) -> cycleChain chain (clobber $ SP.each (0:output))
+    (output, _) -> cycleChain chain (clobber $ S.each (0:output))
 
 fixChain :: Code -> [Int] -> Int
 fixChain code phases =
   let chain = ampChain code phases
-   in cycleChain chain (clobber $ SP.yield 0)
+   in cycleChain chain (clobber $ S.yield 0)
 
 getMax :: [[Int]] -> Maybe Int
 getMax =

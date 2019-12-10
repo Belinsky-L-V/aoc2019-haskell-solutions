@@ -39,9 +39,8 @@ import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
 import Control.Foldl (Fold(..))
 import qualified Control.Foldl as Foldl
-import Streaming (Of, Stream)
-import qualified Streaming as S
-import qualified Streaming.Prelude as SP
+import Streaming
+import qualified Streaming.Prelude as S
 import Data.Functor.Identity
 
 data Halt = Run | Halt deriving (Show, Read, Eq)
@@ -136,7 +135,7 @@ acceptInput = do
   (x, restOfInput) <-
     wrapMaybe
       ("Attemping to get input from an empty buffer.\n" ++ show vm) $
-    runIdentity (SP.uncons inputBuf)
+    runIdentity (S.uncons inputBuf)
   lift $ put vm {inputBuf = restOfInput}
   return x
 
@@ -251,9 +250,9 @@ runProgram code inputs = finalStream $ IntCodeVM Run code 0 inputs
                  Halt -> Right ()
                  Run -> Left output
     opStream :: Stream (Of Int) Interpreter ()
-    opStream = SP.catMaybes $ SP.untilRight oneOp
-    stateStream = runExceptT (S.distribute opStream)
-    finalStream = runStateT (S.distribute stateStream)
+    opStream = S.catMaybes $ S.untilRight oneOp
+    stateStream = runExceptT (distribute opStream)
+    finalStream = runStateT (distribute stateStream)
 
 readIntCode :: Monad m => Text.Text -> ExceptT String m Code
 readIntCode text =
