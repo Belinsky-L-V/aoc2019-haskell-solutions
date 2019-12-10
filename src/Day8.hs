@@ -1,4 +1,4 @@
-module Day8 where
+module Day8 (solve8) where
 
 import Data.Maybe (fromMaybe)
 import Streaming
@@ -25,17 +25,18 @@ part2 ints = do
       listLayers = mapped S.toList layers
   S.fold occludeLayer (repeat 2) id listLayers
 
-solve :: Handle -> IO ()
-solve handle = do
+solve8 :: Handle -> IO String
+solve8 handle = do
   let ints :: Stream (Of Int) IO ()
       ints = S.read . S.map pure . S.concat $ S.fromHandle handle
   result <- part2 $ S.store part1 ints
   let (pixels, p2) = S.lazily result
       (triple, ()) = S.lazily p2
-  case triple of
-    (-1,-1,-1) -> print "Part1 failed"
-    (_,o,t) -> print $ o * t
+  let part1out = case triple of
+                   (-1,-1,-1) -> "Part1 failed"
+                   (_,o,t) -> show $ o * t
   let pretty 0 = ' '
       pretty 1 = '.'
       pretty _ = '*'
-  S.stdoutLn . S.mapped S.toList . chunksOf 25 . S.map pretty $ S.each pixels
+  part2out <- fmap unlines . S.toList_ . S.mapped S.toList . chunksOf 25 . S.map pretty $ S.each pixels
+  return $ part1out ++ "\n" ++ part2out

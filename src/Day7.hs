@@ -1,4 +1,4 @@
-module Day7 where
+module Day7 (solve7) where
 
 import Control.Foldl (Fold(..))
 import qualified Control.Foldl as Foldl
@@ -57,10 +57,10 @@ part1 code = getMax $ runChain code <$> permutations [0..4]
 part2 :: Code -> Maybe Int
 part2 code = Foldl.fold Foldl.maximum $ fixChain code <$> permutations [5..9]
 
-solve :: Handle -> IO ()
-solve handle = do
-  codeText <- Text.IO.hGetContents handle
-  codeParse <- runExceptT (readIntCode codeText)
-  case codeParse of
-    Left err -> putStrLn err
-    Right intCode -> print (part1 intCode) >> print (part2 intCode)
+solve7 :: Handle -> IO String
+solve7 handle = fmap (either id id) . runExceptT $ do
+  codeText <- lift $ Text.IO.hGetContents handle
+  intCode <- readIntCode codeText
+  part1out <- wrapMaybe "Part 1 failed\n" $ part1 intCode
+  part2out <- wrapMaybe "Part 2 failed\n" $ part2 intCode
+  return . unlines . map show $ [part1out , part2out]

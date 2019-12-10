@@ -1,8 +1,8 @@
-module Day6 where
+module Day6 (solve6) where
 
 import qualified Data.Graph.Inductive as FGL
 import Data.Graph.Inductive.PatriciaTree (Gr)
-import Data.List (span, foldl')
+import Data.List (foldl', span)
 import System.IO (Handle, hGetContents)
 
 part1 :: Gr String () -> Int
@@ -28,11 +28,9 @@ parseInput handle = do
   direct <- lines <$> hGetContents handle
   return $ fmap tail . span (/= ')') <$> direct
 
-solve :: Handle -> IO ()
-solve handle = do
+solve6 :: Handle -> IO String
+solve6 handle = do
   input <- parseInput handle
   case toGraph input of
-    (Nothing, _) -> putStrLn "Failed to construct the graph from input :("
-    (Just graph, nodeMap) -> do
-      print $ part1 graph
-      print $ part2 graph nodeMap
+    (Nothing, _) -> return "Failed to construct the graph from input :("
+    (Just graph, nodeMap) -> return . unlines . map show $ [part1 graph, part2 graph nodeMap]

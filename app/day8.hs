@@ -3,4 +3,4 @@ import Day8
 import System.IO (stdin)
 
 main :: IO ()
-main = solve stdin
+main = putStr =<< solve8 stdin

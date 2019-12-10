@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Day3 (solve) where
+module Day3 (solve3) where
 
 import Data.Foldable (asum, foldl')
 import Data.List (sort)
@@ -79,15 +79,15 @@ findShortest path1 path2 intersections =
    in if length distances > 2 then distances !! 1
                               else 0
 
-solve :: Handle -> IO ()
-solve handle = do
+solve3 :: Handle -> IO String
+solve3 handle = do
   (spans1, spans2) <- readInput handle
   let path1 = tracePath spans1
       path2 = tracePath spans2
       vset1 = Map.keysSet path1
       vset2 = Map.keysSet path2
       ints = Set.intersection vset1 vset2
-  case findClosest ints of
-    Nothing -> pure ()
-    Just (d, (v, h)) -> print d
-  print $ findShortest path1 path2 ints
+      output1 = case findClosest ints of
+                  Nothing -> "Part 1 failed\n"
+                  Just (d, (v, h)) -> show d ++ "\n"
+  return $ output1 ++ show (findShortest path1 path2 ints) ++ "\n"

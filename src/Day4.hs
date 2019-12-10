@@ -1,4 +1,4 @@
-module Day4 (solve) where
+module Day4 (solve4) where
 
 import Data.List (group, sort)
 
@@ -11,7 +11,8 @@ valid from to filters =
   let range = [from .. to]
    in filter (and . (filters <*>) . pure) range
 
-solve :: IO ()
-solve = do
-  print $ length (valid 245182 790572 [nondec, has2plus])
-  print $ length (valid 245182 790572 [nondec, has2plus, has2])
+solve4 :: IO String
+solve4 = do
+  let part1 = show $ length (valid 245182 790572 [nondec, has2plus])
+      part2 = show $ length (valid 245182 790572 [nondec, has2plus, has2])
+  return $ unlines [part1, part2]

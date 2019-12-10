@@ -1,4 +1,4 @@
 import Day4
 
 main :: IO ()
-main = solve
+main = putStr =<< solve4
