@@ -17,7 +17,7 @@ import System.IO (Handle)
 clobber :: InputStream -> OutputStream
 clobber stream =
   let code = IntMap.empty
-   in (Left "Initial placeholder", IntCodeVM Halt code 0 (pure ())) <$ stream
+   in (Left "Initial placeholder", dummyVM) <$ stream
 
 ampChain :: Code -> [Int] -> OutputStream -> OutputStream
 ampChain code phases initial =
