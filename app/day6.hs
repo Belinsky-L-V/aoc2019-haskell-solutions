@@ -1,3 +1,6 @@
 import Day6
 
-main = solve
+import System.IO (stdin)
+
+main :: IO ()
+main = solve stdin

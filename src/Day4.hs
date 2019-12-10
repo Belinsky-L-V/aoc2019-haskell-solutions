@@ -1,5 +1,3 @@
-{-# LANGUAGE TypeApplications #-}
-
 module Day4 (solve) where
 
 import Data.List (group, sort)

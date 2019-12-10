@@ -3,6 +3,7 @@ module Day6 where
 import qualified Data.Graph.Inductive as FGL
 import Data.Graph.Inductive.PatriciaTree (Gr)
 import Data.List (span, foldl')
+import System.IO (Handle, hGetContents)
 
 part1 :: Gr String () -> Int
 part1 = FGL.size . FGL.tc
@@ -22,14 +23,14 @@ toGraph edgeLabels =
       edges = FGL.mkEdges nodeMap [(s,t,()) | (s,t) <- edgeLabels]
    in (FGL.mkGraph nlist <$> edges, nodeMap)
 
-parseInput :: IO [(String, String)]
-parseInput = do
-  direct <- lines <$> getContents
+parseInput :: Handle -> IO [(String, String)]
+parseInput handle = do
+  direct <- lines <$> hGetContents handle
   return $ fmap tail . span (/= ')') <$> direct
 
-solve :: IO ()
-solve = do
-  input <- parseInput
+solve :: Handle -> IO ()
+solve handle = do
+  input <- parseInput handle
   case toGraph input of
     (Nothing, _) -> putStrLn "Failed to construct the graph from input :("
     (Just graph, nodeMap) -> do

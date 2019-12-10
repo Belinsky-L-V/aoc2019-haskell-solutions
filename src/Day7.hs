@@ -2,7 +2,9 @@ module Day7 where
 
 import Control.Foldl (Fold(..))
 import qualified Control.Foldl as Foldl
+import qualified Data.IntMap as IntMap
 import Data.List (permutations)
+import Data.Proxy
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.IO as Text.IO
@@ -10,8 +12,7 @@ import qualified Data.Text.Read as Text.Read
 import Intcode
 import Streaming
 import qualified Streaming.Prelude as S
-import Data.Proxy
-import qualified Data.IntMap as IntMap
+import System.IO (Handle)
 
 clobber :: InputStream -> OutputStream
 clobber stream =
@@ -56,9 +57,9 @@ part1 code = getMax $ runChain code <$> permutations [0..4]
 part2 :: Code -> Maybe Int
 part2 code = Foldl.fold Foldl.maximum $ fixChain code <$> permutations [5..9]
 
-solve :: IO ()
-solve = do
-  codeText <- Text.IO.getContents
+solve :: Handle -> IO ()
+solve handle = do
+  codeText <- Text.IO.hGetContents handle
   codeParse <- runExceptT (readIntCode codeText)
   case codeParse of
     Left err -> putStrLn err

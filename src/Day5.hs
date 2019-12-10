@@ -7,6 +7,7 @@ import qualified Data.Text.Read as Text.Read
 import Intcode
 import qualified Streaming as S
 import qualified Streaming.Prelude as SP
+import System.IO (Handle)
 
 solve' :: Code -> Int -> IO ()
 solve' intCode x =
@@ -18,9 +19,9 @@ solve' intCode x =
       Left err -> S.liftIO $ putStrLn err
       Right () -> pure ()
 
-solve :: IO ()
-solve = do
-  codeText <- Text.IO.getContents
+solve :: Handle -> IO ()
+solve handle = do
+  codeText <- Text.IO.hGetContents handle
   codeParse <- runExceptT (readIntCode codeText)
   case codeParse of
     Left err -> putStrLn err

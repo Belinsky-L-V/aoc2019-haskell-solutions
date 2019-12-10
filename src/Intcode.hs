@@ -17,12 +17,14 @@ module Intcode
   , IntCodeVM(..)
   , InputStream
   , OutputStream
+  , wrapMaybe
   , readIntCode
   , modifyIntcode
   , runProgram
   , module Control.Monad.Trans.Class
   , module Data.Functor.Identity
   , module Control.Monad.Trans.Except
+  , module Streaming
   ) where
 
 import Control.Monad.Trans.Class (lift)

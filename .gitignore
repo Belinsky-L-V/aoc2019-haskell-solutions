@@ -1,4 +1,5 @@
 .stack-work/
 inputs/
+test/golden/
 aoc2019-haskell-solutions.cabal
 *~

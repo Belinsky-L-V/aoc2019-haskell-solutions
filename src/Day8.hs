@@ -3,6 +3,7 @@ module Day8 where
 import Data.Maybe (fromMaybe)
 import Streaming
 import qualified Streaming.Prelude as S
+import System.IO (Handle)
 
 part1 :: Monad m => Stream (Of Int) m r -> m (Of (Int,Int,Int) r)
 part1 ints = do
@@ -24,10 +25,10 @@ part2 ints = do
       listLayers = mapped S.toList layers
   S.fold occludeLayer (repeat 2) id listLayers
 
-solve :: IO ()
-solve = do
+solve :: Handle -> IO ()
+solve handle = do
   let ints :: Stream (Of Int) IO ()
-      ints = S.read . S.map pure . S.concat $ S.stdinLn
+      ints = S.read . S.map pure . S.concat $ S.fromHandle handle
   result <- part2 $ S.store part1 ints
   let (pixels, p2) = S.lazily result
       (triple, ()) = S.lazily p2

@@ -2,18 +2,19 @@
 
 module Day3 (solve) where
 
-import Data.Void
-import Text.Megaparsec
-import qualified Text.Megaparsec.Char.Lexer as L
+import Data.Foldable (asum, foldl')
+import Data.List (sort)
+import Data.Map (Map)
+import qualified Data.Map as Map
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.IO as Text.IO
-import Data.Foldable (asum, foldl')
-import Data.Set (Set)
-import qualified Data.Set as Set
-import Data.Map (Map)
-import qualified Data.Map as Map
-import Data.List (sort)
+import Data.Void
+import System.IO (Handle)
+import Text.Megaparsec
+import qualified Text.Megaparsec.Char.Lexer as L
 
 type Parser = Parsec Void Text
 
@@ -38,9 +39,9 @@ parseBothWires = do
   eof
   return (wire1, wire2)
 
-readInput :: IO ([Span], [Span])
-readInput = do
-  result <- parseMaybe parseBothWires <$> Text.IO.getContents
+readInput :: Handle -> IO ([Span], [Span])
+readInput handle = do
+  result <- parseMaybe parseBothWires <$> Text.IO.hGetContents handle
   case result of
     Nothing -> return ([],[])
     Just (first, second) -> return (first, second)
@@ -78,9 +79,9 @@ findShortest path1 path2 intersections =
    in if length distances > 2 then distances !! 1
                               else 0
 
-solve :: IO ()
-solve = do
-  (spans1, spans2) <- readInput
+solve :: Handle -> IO ()
+solve handle = do
+  (spans1, spans2) <- readInput handle
   let path1 = tracePath spans1
       path2 = tracePath spans2
       vset1 = Map.keysSet path1

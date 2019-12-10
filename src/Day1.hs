@@ -1,5 +1,7 @@
 module Day1 (solve) where
 
+import System.IO (Handle, hGetContents)
+
 fuel :: Int -> Int
 fuel n = quot n 3 - 2
 
@@ -10,8 +12,8 @@ fuelTotal n
     where
       f = fuel n
 
-solve :: IO ()
-solve = do
-  input <- map read . lines <$> getContents
+solve :: Handle -> IO ()
+solve handle = do
+  input <- map read . lines <$> hGetContents handle
   print . sum $ map fuel input
   print . sum $ map fuelTotal input
