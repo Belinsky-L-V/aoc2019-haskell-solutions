@@ -102,3 +102,13 @@ executables:
     - -with-rtsopts=-N
     dependencies:
     - aoc2019-haskell-solutions
+
+  d8:
+    main:                day8.hs
+    source-dirs:         app
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - aoc2019-haskell-solutions
