@@ -5,7 +5,6 @@ import qualified Control.Foldl as Foldl
 import Control.Monad.Trans.State
 import qualified Data.IntMap as IntMap
 import Data.List (permutations)
-import Data.Proxy
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.IO as Text.IO
