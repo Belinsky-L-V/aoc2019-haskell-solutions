@@ -8,6 +8,7 @@ module AllDays
   , module Day7
   , module Day8
   , module Day9
+  , module Day10
   , module Day11
   ) where
 
@@ -20,4 +21,5 @@ import Day6
 import Day7
 import Day8
 import Day9
+import Day10
 import Day11

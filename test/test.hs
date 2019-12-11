@@ -2,14 +2,17 @@ module Main where
 
 import AllDays
 import System.IO
-import System.IO.Silently
 import Test.Tasty
 import Test.Tasty.Golden as Golden
+import Day10LawTest (repOrdTest)
 
 main = defaultMain tests
 
 tests :: TestTree
-tests = testGroup "Correct solutions" $ testDay <$> allSolutions
+tests = testGroup "All Tests" [solutions, repOrdTest]
+
+solutions :: TestTree
+solutions = testGroup "Correct solutions" $ testDay <$> allSolutions
 
 allSolutions =
   [ (1, solve1)
@@ -21,6 +24,7 @@ allSolutions =
   , (7, solve7)
   , (8, solve8)
   , (9, solve9)
+  , (10, solve10)
   , (11, solve11)
   ]
 
