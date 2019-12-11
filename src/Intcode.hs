@@ -311,11 +311,10 @@ runIntCodeVM vm = repackResult <$> finalStream vm
   where
     oneOp :: Interpreter (Either (Maybe Int) ())
     oneOp = do
-      output <- runIntcodeOp
-      vm@IntCodeVM{..} <- lift get
-      return $ case haltState of
-                 Halt -> Right ()
-                 Run -> Left output
+      vm@IntCodeVM{haltState} <- lift get
+      case haltState of
+        Halt -> return $ Right ()
+        Run -> Left <$> runIntcodeOp
     opStream :: Stream (Of Int) Interpreter ()
     opStream = S.catMaybes $ S.untilRight oneOp
     stateStream = runExceptT (distribute opStream)
