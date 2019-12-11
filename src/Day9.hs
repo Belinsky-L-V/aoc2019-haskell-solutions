@@ -17,9 +17,9 @@ solve9 handle = fmap (either id id) . runExceptT $ do
   codeText <- lift $ Text.IO.hGetContents handle
   intCode <- readIntCode codeText
   part1out <- case S.lazily . runIdentity . S.toList $ runProgram intCode (S.yield 1) of
-                (out, (Left err, _)) -> throwE $ "Part 1 failed.\n" ++ err
-                (out, _) -> return $ unwords . map show $ out
+                (out, (Success,_)) -> return $ unwords . map show $ out
+                (out, (err, _)) -> throwE $ "Part 1 failed.\n" ++ show err
   part2out <- case S.lazily . runIdentity . S.toList $ runProgram intCode (S.yield 2) of
-                (out, (Left err, _)) -> throwE $ "Part 2 failed.\n" ++ err
-                (out, _) -> return $ unwords . map show $ out
+                (out, (Success,_)) -> return $ unwords . map show $ out
+                (out, (err, _)) -> throwE $ "Part 2 failed.\n" ++ show err
   return $ unlines [part1out, part2out]

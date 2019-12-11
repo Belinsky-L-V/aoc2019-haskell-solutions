@@ -13,8 +13,9 @@
 module Intcode
   ( Code
   , Halt(..)
-  , VMResult
+  , Outcome(..)
   , IntCodeVM(..)
+  , initVM
   , dummyVM
   , InputStream
   , OutputStream
@@ -46,17 +47,32 @@ import Streaming
 import qualified Streaming.Prelude as S
 import Data.Functor.Identity
 
-data Halt = Run | Halt deriving (Show, Read, Eq)
-data Mode = Positional | Immediate | Relative deriving (Show, Read, Eq)
+data Halt
+  = Run
+  | Halt
+  deriving (Show, Read, Eq)
+
+data Mode
+  = Positional
+  | Immediate
+  | Relative
+  deriving (Show, Read, Eq)
+
+data Outcome
+  = Success
+  | UnkownOP String
+  | ReadFromEmpty String
+  | SegFault String
+  | InvalidModes String
+  deriving (Show, Read, Eq)
 
 type Code = IntMap Int
 type Addr = Int
 type Input = Int
 type Output = Int
 type InputStream = Stream (Of Int) Identity ()
-type VMResult = (Either String (), IntCodeVM)
-type OutputStream = Stream (Of Int) Identity VMResult
-type Interpreter = ExceptT String (State IntCodeVM)
+type OutputStream = Stream (Of Int) Identity (Outcome, IntCodeVM)
+type Interpreter = ExceptT Outcome (State IntCodeVM)
 type Op = [Mode] -> Interpreter (Maybe Int)
 
 data IntCodeOp = IntCodeOp
@@ -74,6 +90,9 @@ data IntCodeVM = IntCodeVM
 
 dummyVM :: IntCodeVM
 dummyVM = IntCodeVM Halt IntMap.empty (-1) (-1) (pure ())
+
+initVM :: Code -> InputStream -> IntCodeVM
+initVM code = IntCodeVM Run code 0 0
 
 instance Show IntCodeVM where
   show vm@IntCodeVM{..} =
@@ -95,11 +114,11 @@ instance ToIntCodeOp Int where
     return Nothing
   toOp x modes = do
     vm <- lift get
-    throwE $ "Leftover modes: " ++ show modes ++ "\n"
+    throwE . InvalidModes $ "Leftover modes: " ++ show modes
 
 instance ToIntCodeOp r => ToIntCodeOp (Int -> r) where
   countParams _ = 1 + countParams (Proxy @r)
-  toOp f [] = throwE "Ran out of modes.\n"
+  toOp f [] = throwE . InvalidModes $ "Ran out of modes"
   toOp f (m:ms) = do
     x <- readWithMode m
     toOp (f x) ms
@@ -115,7 +134,7 @@ memLookup at code =
     Nothing ->
       if at >= 0
         then pure 0
-        else throwE "Attempt to access memory at negative address.\n"
+        else throwE . SegFault $ "Attempt to access memory at negative address."
     Just a -> pure a
 
 readWithMode :: Mode -> Interpreter Int
@@ -152,13 +171,13 @@ write x Relative = do
       advPointer = succ instrPointer
   lift $ put vm {code = newCode, instrPointer = advPointer}
   return ()
-write x Immediate = throwE "Attempt to write with immediate mode.\n"
+write x Immediate = throwE . InvalidModes $ "Attempt to write with immediate mode."
 
 acceptInput :: Interpreter Int
 acceptInput = do
   vm@IntCodeVM {..} <- lift get
   (x, restOfInput) <-
-    wrapMaybe "Attemping to get input from an empty buffer.\n" $
+    wrapMaybe (ReadFromEmpty "Attemping to get input from an empty buffer.") $
     runIdentity (S.uncons inputBuf)
   lift $ put vm {inputBuf = restOfInput}
   return x
@@ -172,7 +191,7 @@ inputOp = IntCodeOp inputOp' 1
       return Nothing
     inputOp' modes = do
       vm <- lift get
-      throwE $ "Invalid input modes: " ++ show modes ++ "\n"
+      throwE . InvalidModes $ "Invalid input modes: " ++ show modes
 
 outputOp :: IntCodeOp
 outputOp = IntCodeOp outputOp' 1
@@ -182,7 +201,7 @@ outputOp = IntCodeOp outputOp' 1
       return $ Just x
     outputOp' modes = do
       vm <- lift get
-      throwE $ "Invalid output: " ++ show modes ++ "\n"
+      throwE . InvalidModes $ "Invalid output modes: " ++ show modes
 
 halt :: IntCodeOp
 halt = IntCodeOp halt' 0
@@ -193,7 +212,7 @@ halt = IntCodeOp halt' 0
       return Nothing
     halt' modes = do
       vm <- lift get
-      throwE $ "Trying to halt with modes: " ++ show modes ++ "\n"
+      throwE . InvalidModes $ "Trying to halt with modes: " ++ show modes
 
 jumpConditional :: (Int -> Bool) -> IntCodeOp
 jumpConditional f = IntCodeOp jumpIfTrue' 2
@@ -202,24 +221,27 @@ jumpConditional f = IntCodeOp jumpIfTrue' 2
       vm <- lift get
       check <- readWithMode firstMode
       jumpTo <- readWithMode secondMode
-      if f check then lift $ put vm {instrPointer = jumpTo}
-                 else pure ()
+      if f check
+        then lift $ put vm {instrPointer = jumpTo}
+        else pure ()
       return Nothing
     jumpIfTrue' modes = do
       vm <- lift get
-      throwE $ "Conditional jump with invalid modes: " ++ show modes ++ "\n"
+      throwE . InvalidModes $
+        "Conditional jump with invalid modes: " ++ show modes
 
 writeConditional :: (Int -> Int -> Bool) -> IntCodeOp
 writeConditional f = IntCodeOp writeConditional' 3
   where
-    writeConditional' [firstMode,secondMode,thirdMode] = do
+    writeConditional' [firstMode, secondMode, thirdMode] = do
       first <- readWithMode firstMode
       second <- readWithMode secondMode
       write (fromEnum $ first `f` second) thirdMode
       return Nothing
     writeConditional' modes = do
       vm <- lift get
-      throwE $ "Attempting conditional write with immediate mode: " ++ show modes ++ "\n"
+      throwE . InvalidModes $
+        "Attempting conditional write with immediate mode: " ++ show modes
 
 adjustRelBase :: IntCodeOp
 adjustRelBase = IntCodeOp adjustRelBase' 1
@@ -229,7 +251,9 @@ adjustRelBase = IntCodeOp adjustRelBase' 1
       vm@IntCodeVM {..} <- lift get
       lift $ put vm {relBase = relBase + adjBy}
       return Nothing
-    adjustRelBase' modes = throwE $ "Attempting relative base adjustment with invalid mdoes: " ++ show modes ++ "\n"
+    adjustRelBase' modes =
+      throwE . InvalidModes $
+      "Attempting relative base adjustment with invalid mdoes: " ++ show modes
 
 ops :: IntMap IntCodeOp
 ops = IntMap.fromList
@@ -251,14 +275,14 @@ modifyIntcode code = Foldl.fold map
     map = Fold step code id
     step m (k, v) = IntMap.insert k v m
 
-parseOpCode :: Monad m => Int -> ExceptT String m (Int, [Mode])
+parseOpCode :: Monad m => Int -> ExceptT Outcome m (Int, [Mode])
 parseOpCode n =
   let digitsRev = reverse . show $ n
       opCode = read @Int . reverse . take 2 $ digitsRev
       toMode '0' = pure Positional
       toMode '1' = pure Immediate
       toMode '2' = pure Relative
-      toMode c = throwE $ "Invalid mode code: " ++ show c ++ " in " ++ show n ++ "\n"
+      toMode c = throwE . InvalidModes $ "Invalid mode code: " ++ show c ++ " in " ++ show n
       modes = traverse toMode . drop 2 $ digitsRev
    in sequenceA (opCode, modes)
 
@@ -268,12 +292,14 @@ runIntcodeOp = do
   opCode <- readWithMode Immediate
   parseOp <- parseOpCode opCode
   let (opCode, modes) = parseOp
-  op <- wrapMaybe ("OpCode " ++ show opCode ++ " not recognised") $ IntMap.lookup opCode ops
+  op <-
+    wrapMaybe (UnkownOP $ "OpCode " ++ show opCode ++ " not recognised") $
+    IntMap.lookup opCode ops
   let modesPadded = modes ++ replicate (paramCount op - length modes) Positional
   intCodeOp op modesPadded
 
 runProgram :: Code -> InputStream -> OutputStream
-runProgram code inputs = finalStream $ IntCodeVM Run code 0 0 inputs
+runProgram code inputs = repackResult <$> finalStream (initVM code inputs)
   where
     oneOp :: Interpreter (Either (Maybe Int) ())
     oneOp = do
@@ -286,6 +312,9 @@ runProgram code inputs = finalStream $ IntCodeVM Run code 0 0 inputs
     opStream = S.catMaybes $ S.untilRight oneOp
     stateStream = runExceptT (distribute opStream)
     finalStream = runStateT (distribute stateStream)
+    repackResult :: (Either Outcome (), IntCodeVM) -> (Outcome, IntCodeVM)
+    repackResult (Left err, vm) = (err, vm)
+    repackResult (Right (), vm) = (Success, vm)
 
 readIntCode :: Monad m => Text.Text -> ExceptT String m Code
 readIntCode text =

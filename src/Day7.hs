@@ -16,8 +16,7 @@ import System.IO (Handle)
 
 clobber :: InputStream -> OutputStream
 clobber stream =
-  let code = IntMap.empty
-   in (Left "Initial placeholder", dummyVM) <$ stream
+  let code = IntMap.empty in (Success, dummyVM) <$ stream
 
 ampChain :: Code -> [Int] -> OutputStream -> OutputStream
 ampChain code phases initial =
@@ -36,7 +35,7 @@ runChain code phases =
 cycleChain :: (OutputStream -> OutputStream) -> OutputStream -> Int
 cycleChain chain stream =
   case S.lazily . runIdentity . S.toList $ chain stream of
-    (output, (Right (), _)) -> last output
+    (output, (Success, _)) -> last output
     (output, _) -> cycleChain chain (clobber $ S.each (0:output))
 
 fixChain :: Code -> [Int] -> Int
