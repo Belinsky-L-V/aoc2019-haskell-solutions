@@ -29,23 +29,24 @@ module Intcode
   , module Streaming
   ) where
 
+import Control.Foldl (Fold(..))
+import qualified Control.Foldl as Foldl
 import Control.Monad.Trans.Class (lift)
+import Control.Monad.Trans.Except
 import Control.Monad.Trans.Maybe
 import Control.Monad.Trans.Reader
-import Control.Monad.Trans.Except
 import Control.Monad.Trans.State
+import Data.Functor.Identity
+import Data.IntMap (IntMap)
+import qualified Data.IntMap as IntMap
+import Data.Proxy
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.IO as Text.IO
 import qualified Data.Text.Read as Text.Read
-import Data.Proxy
-import Data.IntMap (IntMap)
-import qualified Data.IntMap as IntMap
-import Control.Foldl (Fold(..))
-import qualified Control.Foldl as Foldl
 import Streaming
 import qualified Streaming.Prelude as S
-import Data.Functor.Identity
+import Text.Read (readEither)
 
 data Halt
   = Run
@@ -60,7 +61,9 @@ data Mode
 
 data Outcome
   = Success
-  | UnkownOP String
+  | UnkownOp String
+  | OpNoParse String
+  | ModeNoParse String
   | ReadFromEmpty String
   | SegFault String
   | InvalidModes String
@@ -276,15 +279,15 @@ modifyIntcode code = Foldl.fold map
     step m (k, v) = IntMap.insert k v m
 
 parseOpCode :: Monad m => Int -> ExceptT Outcome m (Int, [Mode])
-parseOpCode n =
+parseOpCode n = do
   let digitsRev = reverse . show $ n
-      opCode = read @Int . reverse . take 2 $ digitsRev
-      toMode '0' = pure Positional
+  opCode <- withExceptT OpNoParse . except $ readEither . reverse . take 2 $ digitsRev
+  let toMode '0' = pure Positional
       toMode '1' = pure Immediate
       toMode '2' = pure Relative
-      toMode c = throwE . InvalidModes $ "Invalid mode code: " ++ show c ++ " in " ++ show n
-      modes = traverse toMode . drop 2 $ digitsRev
-   in sequenceA (opCode, modes)
+      toMode c = throwE . ModeNoParse $ "Invalid mode code: " ++ show c ++ " in " ++ show n
+  modes <- traverse toMode . drop 2 $ digitsRev
+  return (opCode, modes)
 
 runIntcodeOp :: Interpreter (Maybe Int)
 runIntcodeOp = do
@@ -293,7 +296,7 @@ runIntcodeOp = do
   parseOp <- parseOpCode opCode
   let (opCode, modes) = parseOp
   op <-
-    wrapMaybe (UnkownOP $ "OpCode " ++ show opCode ++ " not recognised") $
+    wrapMaybe (UnkownOp $ "OpCode " ++ show opCode ++ " not recognised") $
     IntMap.lookup opCode ops
   let modesPadded = modes ++ replicate (paramCount op - length modes) Positional
   intCodeOp op modesPadded
