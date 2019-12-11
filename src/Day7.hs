@@ -2,6 +2,7 @@ module Day7 (solve7) where
 
 import Control.Foldl (Fold(..))
 import qualified Control.Foldl as Foldl
+import Control.Monad.Trans.State
 import qualified Data.IntMap as IntMap
 import Data.List (permutations)
 import Data.Proxy
@@ -31,17 +32,45 @@ runChain code phases =
   let permChain = ampChain code phases . clobber $ S.yield 0
    in runIdentity . S.toList_ $ permChain
 
--- shlemiel, the amp feedbacker, yikes
-cycleChain :: (OutputStream -> OutputStream) -> OutputStream -> Int
-cycleChain chain stream =
-  case S.lazily . runIdentity . S.toList $ chain stream of
-    (output, (Success, _)) -> last output
-    (output, _) -> cycleChain chain (clobber $ S.each (0:output))
+listOut = S.lazily . runIdentity . S.toList
 
-fixChain :: Code -> [Int] -> Int
-fixChain code phases =
-  let chain = ampChain code phases
-   in cycleChain chain (clobber $ S.yield 0)
+daisyChain :: IntCodeVM -> ExceptT Outcome (State OutputStream) IntCodeVM
+daisyChain vm@IntCodeVM {inputBuf = inputBuf} = do
+  upChainOut <- lift get
+  let outputStream = runIntCodeVM vm {inputBuf = inputBuf >> (() <$ upChainOut)}
+  case runIdentity $ S.effects outputStream of
+    (Success, newVM) -> do
+      lift . put $ outputStream
+      return newVM
+    st@(ReadFromEmpty _, newVM) -> do
+      reset <- wrapMaybe (ReadFromEmpty "") $ rollbackFailure st
+      lift . put $ outputStream
+      return reset
+    (err, _) -> throwE err
+
+cycleChain :: Monad m => [IntCodeVM] -> InputStream -> ExceptT String m Int
+cycleChain vms stream = do
+  let next = runIdentity . flip runStateT (clobber stream) . runExceptT $ mapM daisyChain vms
+  case next of
+    (Right newVMs, finalOutput) -> do
+      let finalState = runIdentity . S.effects $ finalOutput
+      case finalState of
+        (Success, _) -> do
+          let outputList = runIdentity $ S.toList_ finalOutput
+          if null outputList then throwE "Amp chain didn't have an output."
+                             else return (last outputList)
+        (ReadFromEmpty _, _) -> cycleChain newVMs (() <$ finalOutput)
+        (err, _) -> throwE $ "Chain failed.\n" ++ show err
+
+fixChain :: Monad m => Code -> [Int] -> ExceptT String m Int
+fixChain code phases = do
+  let chain = initVM code . S.yield <$> phases
+  cycleChain chain (S.yield 0)
+
+part2 :: Monad m => Code -> ExceptT String m Int
+part2 code = do
+  maxThrusts <- mapM (fixChain code) (permutations [5..9])
+  wrapMaybe "Part 2: failed to fold thrust outputs" $ Foldl.fold Foldl.maximum maxThrusts
 
 getMax :: [[Int]] -> Maybe Int
 getMax =
@@ -53,13 +82,10 @@ getMax =
 part1 :: Code -> Maybe Int
 part1 code = getMax $ runChain code <$> permutations [0..4]
 
-part2 :: Code -> Maybe Int
-part2 code = Foldl.fold Foldl.maximum $ fixChain code <$> permutations [5..9]
-
 solve7 :: Handle -> IO String
 solve7 handle = fmap (either id id) . runExceptT $ do
   codeText <- lift $ Text.IO.hGetContents handle
   intCode <- readIntCode codeText
   part1out <- wrapMaybe "Part 1 failed\n" $ part1 intCode
-  part2out <- wrapMaybe "Part 2 failed\n" $ part2 intCode
+  part2out <- part2 intCode
   return . unlines . map show $ [part1out , part2out]

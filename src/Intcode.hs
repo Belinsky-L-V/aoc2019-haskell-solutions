@@ -23,6 +23,8 @@ module Intcode
   , readIntCode
   , modifyIntcode
   , runProgram
+  , runIntCodeVM
+  , rollbackFailure
   , module Control.Monad.Trans.Class
   , module Data.Functor.Identity
   , module Control.Monad.Trans.Except
@@ -302,7 +304,10 @@ runIntcodeOp = do
   intCodeOp op modesPadded
 
 runProgram :: Code -> InputStream -> OutputStream
-runProgram code inputs = repackResult <$> finalStream (initVM code inputs)
+runProgram code inputs = runIntCodeVM (initVM code inputs)
+
+runIntCodeVM :: IntCodeVM -> OutputStream
+runIntCodeVM vm = repackResult <$> finalStream vm
   where
     oneOp :: Interpreter (Either (Maybe Int) ())
     oneOp = do
@@ -318,6 +323,18 @@ runProgram code inputs = repackResult <$> finalStream (initVM code inputs)
     repackResult :: (Either Outcome (), IntCodeVM) -> (Outcome, IntCodeVM)
     repackResult (Left err, vm) = (err, vm)
     repackResult (Right (), vm) = (Success, vm)
+
+rollbackFailure :: (Outcome, IntCodeVM) -> Maybe IntCodeVM
+rollbackFailure (Success, vm) = Just vm
+rollbackFailure (OpNoParse _, vm@IntCodeVM {..}) =
+  Just $ vm {instrPointer = instrPointer - 1}
+rollbackFailure (UnkownOp _, vm@IntCodeVM {..}) =
+  Just $ vm {instrPointer = instrPointer - 1}
+rollbackFailure (ModeNoParse _, vm@IntCodeVM {..}) =
+  Just $ vm {instrPointer = instrPointer - 1}
+rollbackFailure (ReadFromEmpty _, vm@IntCodeVM {..}) =
+  Just $ vm {instrPointer = instrPointer - 1}
+rollbackFailure (_, _) = Nothing
 
 readIntCode :: Monad m => Text.Text -> ExceptT String m Code
 readIntCode text =
