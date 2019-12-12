@@ -28,6 +28,7 @@ dependencies:
 - fgl >= 5.7.0.1 && < 5.8
 - streaming >= 0.2.3.0 && < 0.3
 - foldl >= 1.4.5 && < 1.5
+- deepseq >= 1.4.4.0 && < 1.5
 
 library:
   source-dirs: src
@@ -135,6 +136,16 @@ executables:
 
   d11:
     main:                day11.hs
+    source-dirs:         app
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - aoc2019-haskell-solutions
+
+  d12:
+    main:                day12.hs
     source-dirs:         app
     ghc-options:
     - -threaded
