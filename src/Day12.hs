@@ -3,8 +3,11 @@
 
 module Day12 where
 
+import Control.DeepSeq
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Except
+import Data.Bifunctor
+import Data.List (transpose)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.IO as Text.IO
@@ -13,13 +16,6 @@ import System.IO (Handle)
 import Text.Megaparsec
 import Text.Megaparsec.Char
 import qualified Text.Megaparsec.Char.Lexer as Lexer
-import Control.Foldl (Fold(..), fold)
-import qualified Control.Foldl as Foldl
-import Data.Bifunctor
-import Data.Vector.Unboxed (Vector)
-import qualified Data.Vector.Unboxed as Vector
-import Data.List (transpose)
-import Control.DeepSeq
 
 type Parser = Parsec Void Text
 
@@ -73,10 +69,10 @@ stepN n pos vel = snd $ until ((>= n) . fst) go (0,(pos,vel))
   where
     go (c,arg) = (succ c, uncurry step arg)
 
-stepTillAllEq :: [(PositionOnAxis, VelocityOnAxis)] -> Int
-stepTillAllEq init = fst $ until (\(n, st) -> n > 0 && st == init) go (0, init)
+stepTillEq :: (PositionOnAxis, VelocityOnAxis) -> Int
+stepTillEq init = fst $ until (\(n, st) -> n > 0 && st == init) go (0, init)
   where
-    go (force -> (!c, !arg)) = (succ c, uncurry step <$> arg)
+    go (force -> (!c, !arg)) = (succ c, uncurry step arg)
 
 energy :: [[Int]] -> [Int]
 energy byAxis =
@@ -95,7 +91,7 @@ part2 :: [CoordsOfMoon] -> Int
 part2 coords =
   let coordsByAxis = transpose coords
       initVel = replicate 4 [0,0,0,0]
-   in stepTillAllEq $ zip coordsByAxis initVel
+   in foldr lcm 1 $ stepTillEq <$> zip coordsByAxis initVel
 
 solve12 :: Handle -> IO String
 solve12 handle = fmap (either id id) . runExceptT $ do
