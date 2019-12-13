@@ -19,11 +19,14 @@ module Intcode
   , dummyVM
   , InputStream
   , OutputStream
+  , OutputStreamM
   , wrapMaybe
   , readIntCode
   , modifyIntcode
   , runProgram
   , runIntCodeVM
+  , runWithFeedback
+  , runWithFeedbackM
   , rollbackFailure
   , module Control.Monad.Trans.Class
   , module Data.Functor.Identity
@@ -76,7 +79,8 @@ type Addr = Int
 type Input = Int
 type Output = Int
 type InputStream = Stream (Of Int) Identity ()
-type OutputStream = Stream (Of Int) Identity (Outcome, IntCodeVM)
+type OutputStream = OutputStreamM Identity
+type OutputStreamM m = Stream (Of Int) m (Outcome, IntCodeVM)
 type Interpreter = ExceptT Outcome (State IntCodeVM)
 type Op = [Mode] -> Interpreter (Maybe Int)
 
@@ -303,15 +307,15 @@ runIntcodeOp = do
   let modesPadded = modes ++ replicate (paramCount op - length modes) Positional
   intCodeOp op modesPadded
 
-runProgram :: Code -> InputStream -> OutputStream
+runProgram :: Monad m => Code -> InputStream -> OutputStreamM m
 runProgram code inputs = runIntCodeVM (initVM code inputs)
 
-runIntCodeVM :: IntCodeVM -> OutputStream
-runIntCodeVM vm = repackResult <$> finalStream vm
+runIntCodeVM :: Monad m => IntCodeVM -> OutputStreamM m
+runIntCodeVM vm = hoist (return . runIdentity) $ repackResult <$> finalStream vm
   where
     oneOp :: Interpreter (Either (Maybe Int) ())
     oneOp = do
-      vm@IntCodeVM{haltState} <- lift get
+      vm@IntCodeVM {haltState} <- lift get
       case haltState of
         Halt -> return $ Right ()
         Run -> Left <$> runIntcodeOp
@@ -322,6 +326,26 @@ runIntCodeVM vm = repackResult <$> finalStream vm
     repackResult :: (Either Outcome (), IntCodeVM) -> (Outcome, IntCodeVM)
     repackResult (Left err, vm) = (err, vm)
     repackResult (Right (), vm) = (Success, vm)
+
+runWithFeedback ::
+     ([Int] -> InputStream) -> IntCodeVM -> ([Int], (Outcome, IntCodeVM))
+runWithFeedback feedback vm =
+  runIdentity (runWithFeedbackM (return . feedback) vm)
+
+runWithFeedbackM ::
+     Monad m
+  => ([Int] -> m InputStream)
+  -> IntCodeVM
+  -> m ([Int], (Outcome, IntCodeVM))
+runWithFeedbackM feedback vm = do
+  result@(outputList, (state, vm@IntCodeVM {..})) <-
+    S.lazily <$> S.toList (runIntCodeVM vm)
+  case state of
+    ReadFromEmpty _ -> do
+      newInput <- feedback outputList
+      let newVM = vm {instrPointer = instrPointer - 1, inputBuf = newInput}
+      runWithFeedbackM feedback newVM
+    _ -> return result
 
 rollbackFailure :: (Outcome, IntCodeVM) -> Maybe IntCodeVM
 rollbackFailure (Success, vm) = Just vm

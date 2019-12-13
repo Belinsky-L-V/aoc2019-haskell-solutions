@@ -27,6 +27,7 @@ allSolutions =
   , (10, solve10)
   , (11, solve11)
   , (12, solve12)
+  , (13, solve13)
   ]
 
 testDay :: (Int, Handle -> IO String) -> TestTree
