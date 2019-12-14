@@ -29,6 +29,7 @@ dependencies:
 - streaming >= 0.2.3.0 && < 0.3
 - foldl >= 1.4.5 && < 1.5
 - deepseq >= 1.4.4.0 && < 1.5
+- binary-search >= 1.0.0.3 && < 1.1
 
 library:
   source-dirs: src
@@ -156,6 +157,16 @@ executables:
 
   d13:
     main:                day13.hs
+    source-dirs:         app
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - aoc2019-haskell-solutions
+
+  d14:
+    main:                day14.hs
     source-dirs:         app
     ghc-options:
     - -threaded
