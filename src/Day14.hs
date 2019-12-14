@@ -74,22 +74,15 @@ topSortDAG dependsOn =
           go
    in reverse . snd . snd $ runState go (Map.keysSet dependsOn, [])
 
-orderChems :: Map Chemical Int -> Chemical -> Chemical -> Ordering
-orderChems ranks a b =
-  let ranka = ranks Map.! a
-      rankb = ranks Map.! b
-   in compare ranka rankb
-
 wrapMaybe str = maybeToExceptT str . MaybeT . pure
 
 costOfReaction ::
      Map Chemical (Amount, Inputs)
-  -> Map Chemical Int
   -> Chemical
   -> Amount
   -> ExceptT String (State Leftovers) Amount
-costOfReaction reactions ranks "ORE" n = return n
-costOfReaction reactions ranks chem n = do
+costOfReaction reactions "ORE" n = return n
+costOfReaction reactions chem n = do
   (amount, inputs) <-
     wrapMaybe "Chemical not in map." $ Map.lookup chem reactions
   leftovers <- lift get
@@ -100,13 +93,12 @@ costOfReaction reactions ranks chem n = do
       lift . put $ Map.insert chem (inLeftovers - n) leftovers
       return 0
     else do
-      let sortedInputs = sortBy (\(a, _) (b, _) -> orderChems ranks a b) inputs
       let multiple =
             if amount >= toProduce
               then 1
               else quot toProduce amount + fromEnum (rem toProduce amount > 0)
       let costOfInput (ingred, ingredAmount) =
-            costOfReaction reactions ranks ingred (ingredAmount * multiple)
+            costOfReaction reactions ingred (ingredAmount * multiple)
       oreInInputs <- mapM costOfInput inputs
       leftovers <- lift get
       lift . put $ Map.insert chem (amount * multiple - toProduce) leftovers
@@ -114,17 +106,13 @@ costOfReaction reactions ranks chem n = do
 
 part1 :: Monad m => Map Chemical (Amount, Inputs) -> ExceptT String m Int
 part1 reactions = do
-  let topSortList = topSortDAG $ Map.map snd reactions
-      rankMap = Map.fromList $ zip topSortList [0..]
-      result = costOfReaction reactions rankMap "FUEL" 1
+  let result = costOfReaction reactions "FUEL" 1
   except . fst . flip runState Map.empty . runExceptT $ result
 
 part2 :: Monad m => Map Chemical (Amount, Inputs) -> ExceptT String m Int
 part2 reactions = do
-  let topSortList = topSortDAG $ Map.map snd reactions
-      rankMap = Map.fromList $ zip topSortList [0..]
-      rewrap = except . fst . flip runState Map.empty . runExceptT
-      initialised n = rewrap $ costOfReaction reactions rankMap "FUEL" n
+  let rewrap = except . fst . flip runState Map.empty . runExceptT
+      initialised n = rewrap $ costOfReaction reactions "FUEL" n
       searchWith n = (<= 1000000000000) <$> initialised n
   range <- searchM positiveExponential divForever searchWith
   wrapMaybe "Binary search failed" $ largest True range
@@ -146,11 +134,37 @@ simpleReactionMap reactions =
     then throwE "A chemical doesn't have exactly 1 way to produce it"
     else return $ Map.map head reactions
 
+sortedReactionMap ::
+     Monad m
+  => Map Chemical (Amount, Inputs)
+  -> ExceptT String m (Map Chemical (Amount, Inputs))
+sortedReactionMap reactions = do
+  let topSortList = topSortDAG $ Map.map snd reactions
+      rankMap = Map.fromList $ ("ORE", -1) : zip topSortList [0 ..]
+      orderChems :: Chemical -> Chemical -> Ordering
+      orderChems a b =
+        let ranka = rankMap Map.! a
+            rankb = rankMap Map.! b
+         in compare ranka rankb
+      allComponentsRanked =
+        not . or $
+        Map.map
+          (elem Nothing . map ((`Map.lookup` rankMap) . fst) . snd)
+          reactions
+      allResultsRanked =
+        notElem Nothing . map (`Map.lookup` rankMap) $ Map.keys reactions
+      sortInputs (amount, inputs) =
+        (amount, sortBy (\(a, _) (b, _) -> orderChems a b) inputs)
+  if allResultsRanked && allComponentsRanked
+    then return $ Map.map sortInputs reactions
+    else throwE "Could not topologically sort chemicals."
+
 solve14 :: Handle -> IO String
-solve14 handle = fmap (either id id) . runExceptT $ do
-  input <- lift $ Text.IO.hGetContents handle
-  parsed <- parseInput input
-  reactions <- simpleReactionMap . reactionMap $ parsed
-  part1out <- part1 reactions
-  part2out <- part2 reactions
-  return . unlines . map show $ [part1out, part2out]
+solve14 handle =
+  fmap (either id id) . runExceptT $ do
+    input <- lift $ Text.IO.hGetContents handle
+    parsed <- parseInput input
+    reactions <- sortedReactionMap =<< simpleReactionMap (reactionMap parsed)
+    part1out <- part1 reactions
+    part2out <- part2 reactions
+    return . unlines . map show $ [part1out, part2out]
