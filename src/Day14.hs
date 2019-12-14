@@ -10,7 +10,6 @@ import Control.Monad.Trans.Except
 import Control.Monad.Trans.Maybe
 import Control.Monad.Trans.State
 import Data.Bifunctor
-import Data.List (sortBy)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
@@ -54,25 +53,6 @@ parseAll = many parseReaction <* eof
 
 parseInput :: Monad m => Text -> ExceptT String m [Reaction]
 parseInput input = except . first errorBundlePretty $ parse parseAll "" input
-
-topSortDAG :: Map Chemical Inputs -> [Chemical]
-topSortDAG dependsOn =
-  let visit :: Chemical -> State (Set Chemical, [Chemical]) ()
-      visit chem = do
-        (toVisit, sorted) <- get
-        when (Set.member chem toVisit) $ do
-          mapM_ (visit . fst) . fromMaybe [] $ Map.lookup chem dependsOn
-          (toVisit, sorted) <- get
-          let newToVisit = Set.delete chem toVisit
-              newSorted = chem : sorted
-          put (newToVisit, newSorted)
-      go :: State (Set Chemical, [Chemical]) ()
-      go = do
-        (toVisit, sorted) <- get
-        unless (Set.null toVisit) $ do
-          visit (Set.elemAt 0 toVisit)
-          go
-   in reverse . snd . snd $ runState go (Map.keysSet dependsOn, [])
 
 wrapMaybe str = maybeToExceptT str . MaybeT . pure
 
@@ -134,37 +114,12 @@ simpleReactionMap reactions =
     then throwE "A chemical doesn't have exactly 1 way to produce it"
     else return $ Map.map head reactions
 
-sortedReactionMap ::
-     Monad m
-  => Map Chemical (Amount, Inputs)
-  -> ExceptT String m (Map Chemical (Amount, Inputs))
-sortedReactionMap reactions = do
-  let topSortList = topSortDAG $ Map.map snd reactions
-      rankMap = Map.fromList $ ("ORE", -1) : zip topSortList [0 ..]
-      orderChems :: Chemical -> Chemical -> Ordering
-      orderChems a b =
-        let ranka = rankMap Map.! a
-            rankb = rankMap Map.! b
-         in compare ranka rankb
-      allComponentsRanked =
-        not . or $
-        Map.map
-          (elem Nothing . map ((`Map.lookup` rankMap) . fst) . snd)
-          reactions
-      allResultsRanked =
-        notElem Nothing . map (`Map.lookup` rankMap) $ Map.keys reactions
-      sortInputs (amount, inputs) =
-        (amount, sortBy (\(a, _) (b, _) -> orderChems a b) inputs)
-  if allResultsRanked && allComponentsRanked
-    then return $ Map.map sortInputs reactions
-    else throwE "Could not topologically sort chemicals."
-
 solve14 :: Handle -> IO String
 solve14 handle =
   fmap (either id id) . runExceptT $ do
     input <- lift $ Text.IO.hGetContents handle
     parsed <- parseInput input
-    reactions <- sortedReactionMap =<< simpleReactionMap (reactionMap parsed)
+    reactions <- simpleReactionMap (reactionMap parsed)
     part1out <- part1 reactions
     part2out <- part2 reactions
     return . unlines . map show $ [part1out, part2out]
