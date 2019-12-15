@@ -13,6 +13,7 @@ module AllDays
   , module Day12
   , module Day13
   , module Day14
+  , module Day15
   ) where
 
 import Day1
@@ -29,3 +30,4 @@ import Day11
 import Day12
 import Day13
 import Day14
+import Day15

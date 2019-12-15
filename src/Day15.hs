@@ -1,8 +1,11 @@
 {-# LANGUAGE RecordWildCards #-}
 
-module Day15 (solve15) where
+module Day15
+  ( solve15
+  ) where
 
 import Control.Foldl (Fold(..), fold)
+import qualified Control.Foldl as Foldl
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Except
 import Control.Monad.Trans.Maybe
@@ -17,11 +20,25 @@ import Streaming
 import qualified Streaming.Prelude as S
 import System.IO (Handle)
 
-data Direction = DirNorth | DirSouth | DirWest | DirEast deriving (Eq, Show)
+data Direction
+  = DirNorth
+  | DirSouth
+  | DirWest
+  | DirEast
+  deriving (Eq, Show)
+
 type Position = Int
+
 type MazeGraph = Gr () Direction
-type MazeCrawler = (Position, Seq Position, MazeGraph, Int, IntCodeVM)
-data MazeTile = TileWall | TileEmpty | TileOx deriving (Eq, Show)
+
+type MazeCrawler
+   = (Position, Seq Position, MazeGraph, Int, IntCodeVM, Maybe Position)
+
+data MazeTile
+  = TileWall
+  | TileEmpty
+  | TileOx
+  deriving (Eq, Show)
 
 dirToInt :: Direction -> Int
 dirToInt DirNorth = 1
@@ -45,17 +62,22 @@ addNeighb :: [(Direction, Int)] -> Int -> ([(Direction, Int)], Int)
 addNeighb edgeList nextNodeNum =
   let add (es, nn) checking =
         if elem checking $ fst <$> edgeList
-           then (es, nn)
-           else ((checking, nn):es, succ nn)
-  in fold (Fold add ([], nextNodeNum) id) [DirNorth, DirSouth, DirWest, DirEast]
+          then (es, nn)
+          else ((checking, nn) : es, succ nn)
+   in fold
+        (Fold add ([], nextNodeNum) id)
+        [DirNorth, DirSouth, DirWest, DirEast]
 
 pathToEdges :: Monad m => Path -> MazeGraph -> ExceptT String m [Direction]
 pathToEdges path maze = go path
   where
     go (f:t:rest) = do
-      dir <- wrapMaybe "Could not find a path to node." $
-        find (\d -> hasLEdge maze (f,t,d)) [DirNorth, DirSouth, DirWest, DirEast]
-      tailPath <- go (t:rest)
+      dir <-
+        wrapMaybe "Could not find a path to node." $
+        find
+          (\d -> hasLEdge maze (f, t, d))
+          [DirNorth, DirSouth, DirWest, DirEast]
+      tailPath <- go (t : rest)
       return $ dir : tailPath
     go _ = pure []
 
@@ -65,10 +87,12 @@ unconsSeq (h :<| rest) = Just (h, rest)
 
 travelToNext :: ExceptT String (State MazeCrawler) (MazeTile, Position)
 travelToNext = do
-  (pos, toVisit, maze, nextNodeNum, vm@IntCodeVM {..}) <- lift get
-  (next, rest) <- wrapMaybe "Could not find oxygen in the maze." $ unconsSeq toVisit
+  (pos, toVisit, maze, nextNodeNum, vm@IntCodeVM {..}, ox) <- lift get
+  (next, rest) <-
+    wrapMaybe "Could not find oxygen in the maze." $ unconsSeq toVisit
   let (mcontext, restOfMaze) = match next maze
-  (inList, _, _, outList) <- wrapMaybe "Could not find the node to visit in the graph." mcontext
+  (inList, _, _, outList) <-
+    wrapMaybe "Could not find the node to visit in the graph." mcontext
   case find ((== pos) . snd) inList of
     Just (dir, _) -> do
       finalStatus <- moveAndRead [dir]
@@ -87,47 +111,55 @@ travelToNext = do
         TileEmpty -> return (finalStatus, next)
   where
     moveAndRead :: [Direction] -> ExceptT String (State MazeCrawler) MazeTile
-    moveAndRead [] = do
-      (pos, toVisit, maze, nextNodeNum, vm) <- lift get
-      throwE . unlines $ ["Tried to travel on a zero length path:", show pos, show toVisit, prettify maze]
+    moveAndRead [] = throwE "Tried to travel on a zero length path."
     moveAndRead dirs = do
-      (pos, toVisit, maze, nextNodeNum, vm) <- lift get
+      (pos, toVisit, maze, nextNodeNum, vm, ox) <- lift get
       let input = S.each (dirToInt <$> dirs)
           outputStream = runIntCodeVM vm {inputBuf = input}
-      (outputList, (state, newVm@IntCodeVM {..})) <- S.lazily <$> S.toList outputStream
+      (outputList, (state, newVm@IntCodeVM {..})) <-
+        S.lazily <$> S.toList outputStream
       wrapMaybe "Failed to return status." $ uncons outputList
       finalStatus <- wrapMaybe "Invalid status." $ intToTile (last outputList)
       case state of
         ReadFromEmpty _ -> do
           let rewVM = newVm {instrPointer = instrPointer - 1}
-          lift $ put (pos, toVisit, maze, nextNodeNum, rewVM)
+          lift $ put (pos, toVisit, maze, nextNodeNum, rewVM, ox)
           return finalStatus
         Success -> throwE "Intcode halted"
         _ -> throwE "Intcode failed"
 
-findOx :: ExceptT String (State MazeCrawler) Int
-findOx = do
-  (pos, toVisit, maze, nextNodeNum, vm) <- lift get
-  (next, rest) <- wrapMaybe "Could not find oxygen in the maze." $ unconsSeq toVisit
-  let (mcontext, restOfMaze) = match next maze
-  (_, _, _, outList) <- wrapMaybe "Could not find the node to visit in the graph" mcontext
-  (tileAtNext, finalNext) <- travelToNext
-  (_, _, _, _, newVm) <- lift get
-  case tileAtNext of
-    TileOx -> return next
-    TileWall -> do
-      lift $ put (finalNext, rest, maze, nextNodeNum, newVm)
-      findOx
-    TileEmpty -> do
-      let (addEdges, newNextNodeNum) = addNeighb outList nextNodeNum
-          newOutAdj = outList ++ addEdges
-          newNodes = snd <$> addEdges
-          newToVisit = rest <|> Seq.fromList newNodes
-          mazeWithNodes = fold (Fold (\acc node -> insNode (node, ()) acc) restOfMaze id) newNodes
-          newInAdj = [(invertDir dir, node) | (dir, node) <- newOutAdj]
-          newMaze = (newInAdj, next, (), newOutAdj) & mazeWithNodes
-      lift $ put (next, newToVisit, newMaze, newNextNodeNum, newVm)
-      findOx
+mapMaze :: ExceptT String (State MazeCrawler) ()
+mapMaze = do
+  (pos, toVisit, maze, nextNodeNum, vm, ox) <- lift get
+  case unconsSeq toVisit of
+    Nothing -> return ()
+    Just (next, rest) -> do
+      let (mcontext, restOfMaze) = match next maze
+      (_, _, _, outList) <-
+        wrapMaybe "Could not find the node to visit in the graph" mcontext
+      (tileAtNext, finalNext) <- travelToNext
+      (_, _, _, _, newVm, _) <- lift get
+      if tileAtNext == TileWall
+        then do
+          lift $ put (finalNext, rest, maze, nextNodeNum, newVm, ox)
+          mapMaze
+        else do
+          let (addEdges, newNextNodeNum) = addNeighb outList nextNodeNum
+              newOutAdj = outList ++ addEdges
+              newNodes = snd <$> addEdges
+              newToVisit = Seq.fromList newNodes <|> rest
+              mazeWithNodes =
+                fold
+                  (Fold (\acc node -> insNode (node, ()) acc) restOfMaze id)
+                  newNodes
+              newInAdj = [(invertDir dir, node) | (dir, node) <- newOutAdj]
+              newMaze = (newInAdj, next, (), newOutAdj) & mazeWithNodes
+              newOx =
+                case tileAtNext of
+                  TileOx -> Just next
+                  _ -> ox
+          lift $ put (next, newToVisit, newMaze, newNextNodeNum, newVm, newOx)
+          mapMaze
 
 setupMazeCrawler :: IntCodeVM -> MazeCrawler
 setupMazeCrawler vm =
@@ -147,22 +179,28 @@ setupMazeCrawler vm =
       pos = 0
       toVisit = Seq.fromList [1 .. 4]
       nextNodeNum = 5
-   in (pos, toVisit, maze, nextNodeNum, vm)
+   in (pos, toVisit, maze, nextNodeNum, vm, Nothing)
 
-part1 :: Monad m => Code -> ExceptT String m Int
-part1 code = do
+solve' :: Monad m => Code -> ExceptT String m (Int, Int)
+solve' code = do
   let vm = initVM code (pure ())
       initState = setupMazeCrawler vm
-      (result, finalState) = flip runState initState . runExceptT $ findOx
-  oxAt <- except result
-  let (_, _, maze, _, _) = finalState
-      pathLength = length (esp 0 oxAt maze) - 1
-  return pathLength
+      (result, finalState) = flip runState initState . runExceptT $ mapMaze
+  except result
+  let (_, _, maze, _, _, maybeOxAt) = finalState
+  oxAt <- wrapMaybe "oxygen not found" maybeOxAt
+  let originToOxSteps = length (esp 0 oxAt maze) - 1
+      shortestPathsFromOx = bft oxAt maze
+      longestShortestPath = map length shortestPathsFromOx
+  toFillUp <-
+    wrapMaybe "Failed to construct shortest paths" $
+    fold Foldl.maximum longestShortestPath
+  return (originToOxSteps, toFillUp - 2)
 
 solve15 :: Handle -> IO String
 solve15 handle =
   fmap (either id id) . runExceptT $ do
     codeText <- lift $ Text.IO.hGetContents handle
     intCode <- readIntCode codeText
-    part1out <- part1 intCode
-    return . unlines . map show $ [part1out]
+    (part1out, part2out) <- solve' intCode
+    return . unlines . map show $ [part1out, part2out]
